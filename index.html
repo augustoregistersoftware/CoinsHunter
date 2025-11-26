@@ -100,6 +100,41 @@
                 transform: rotate(360deg);
             }
         }
+
+        /* Start Button Styling - Improved */
+        #start-btn {
+            display: none;
+            /* Hidden by default until loaded */
+            margin-top: 30px;
+            padding: 20px 50px;
+            font-size: 1.5rem;
+            background: #FFD700;
+            color: #000;
+            border: 4px solid #FFF;
+            border-radius: 50px;
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            animation: pulse 2s infinite;
+            z-index: 10000;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+            }
+
+            50% {
+                transform: scale(1.05);
+                box-shadow: 0 0 40px rgba(255, 215, 0, 0.8);
+            }
+
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+            }
+        }
     </style>
 </head>
 
@@ -111,7 +146,7 @@
         <div id="loading-text">Carregando AR...</div>
         <div id="permission-note" style="font-size: 0.8rem; margin-top: 10px; opacity: 0.7;">Permita o acesso à câmera
         </div>
-        <button id="start-btn" style="display: none; margin-top: 20px;" onclick="startGame()">INICIAR JOGO</button>
+        <button id="start-btn" onclick="startGame()">INICIAR JOGO</button>
         <div id="error-msg"
             style="color: #ff4b1f; margin-top: 20px; max-width: 80%; text-align: center; display: none;"></div>
     </div>
@@ -120,9 +155,9 @@
     <div id="hud" style="display: none;">
         <div id="score-container">
             <span id="coin-icon">●</span>
-            <span>Moedas: <span id="score">0</span></span>
+            <span>Pontos: <span id="score">0</span></span>
         </div>
-        <button onclick="resetGame()">Resetar Moedas</button>
+        <button onclick="resetGame()">Resetar</button>
     </div>
 
     <!-- AR Scene -->
@@ -162,6 +197,7 @@
         function showError(msg) {
             loadingText.style.display = 'none';
             document.querySelector('.spinner').style.display = 'none';
+            startBtn.style.display = 'none';
             errorMsg.innerText = msg;
             errorMsg.style.display = 'block';
         }
@@ -184,6 +220,206 @@
             gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
 
             oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // --- Collectible Logic ---
+        AFRAME.registerComponent('collectible-behavior', {
+            schema: {
+                type: { type: 'string', default: 'coin' },
+                value: { type: 'number', default: 1 }
+            },
+            init: function () {
+                this.rotSpeed = 1 + Math.random() * 2;
+
+                // Find the clickable child (hitbox)
+                const hitBox = this.el.querySelector('.clickable');
+                if (hitBox) {
+                    hitBox.addEventListener('click', (evt) => {
+                        collectItem(this.el, this.data.value, this.data.type);
+                    });
+                    hitBox.addEventListener('touchstart', (evt) => {
+                        collectItem(this.el, this.data.value, this.data.type);
+                    });
+                }
+
+                this.initialY = this.el.object3D.position.y;
+                this.timeOffset = Math.random() * 100;
+            },
+            tick: function (time, timeDelta) {
+                this.el.object3D.rotation.y += this.rotSpeed * (timeDelta / 1000);
+                const bobAmount = 0.1;
+                const bobSpeed = 0.002;
+                this.el.object3D.position.y = this.initialY + Math.sin(time * bobSpeed + this.timeOffset) * bobAmount;
+            }
+        });
+
+        function spawnItem() {
+            // 10% chance to spawn a Chest, 90% Coin
+            const isChest = Math.random() > 0.9;
+
+            if (isChest) {
+                spawnChest();
+            } else {
+                spawnCoin();
+            }
+        }
+
+        function spawnChest() {
+            const chest = document.createElement('a-entity');
+
+            // Harder to find: Further away and wider spread
+            const x = (Math.random() - 0.5) * 12;
+            const y = (Math.random() * 3) - 1;
+            const z = -(Math.random() * 5 + 5);
+
+            chest.setAttribute('position', `${x} ${y} ${z}`);
+
+            // Visuals: Chest (Brown Box)
+            const box = document.createElement('a-box');
+            box.setAttribute('color', '#8B4513'); // SaddleBrown
+            box.setAttribute('depth', '0.4');
+            box.setAttribute('height', '0.3');
+            box.setAttribute('width', '0.5');
+            box.setAttribute('material', 'metalness: 0.1; roughness: 0.8');
+
+            // Gold lock detail
+            const lock = document.createElement('a-box');
+            lock.setAttribute('color', '#FFD700');
+            lock.setAttribute('depth', '0.42');
+            lock.setAttribute('height', '0.1');
+            lock.setAttribute('width', '0.1');
+            lock.setAttribute('position', '0 0 0');
+
+            // Hitbox
+            const hitBox = document.createElement('a-sphere');
+            hitBox.setAttribute('radius', '0.8');
+            hitBox.setAttribute('material', 'visible: false; opacity: 0');
+            hitBox.classList.add('clickable');
+
+            chest.appendChild(box);
+            chest.appendChild(lock);
+            chest.appendChild(hitBox);
+
+            // Value: 5 points
+            chest.setAttribute('collectible-behavior', 'type: chest; value: 5');
+
+            // Animation
+            chest.setAttribute('animation', 'property: scale; from: 0 0 0; to: 1 1 1; dur: 800; easing: easeOutElastic');
+
+            coinContainer.appendChild(chest);
+        }
+
+        function spawnCoin() {
+            const coin = document.createElement('a-entity');
+            const x = (Math.random() - 0.5) * 6;
+            const y = (Math.random() * 1.5) - 0.5;
+            const z = -(Math.random() * 3 + 2);
+
+            coin.setAttribute('position', `${x} ${y} ${z}`);
+
+            const mesh = document.createElement('a-cylinder');
+            mesh.setAttribute('color', '#FFD700');
+            mesh.setAttribute('height', '0.1');
+            mesh.setAttribute('radius', '0.3');
+            mesh.setAttribute('rotation', '90 0 0');
+            mesh.setAttribute('material', 'metalness: 0.8; roughness: 0.2; opacity: 0.9');
+
+            const ring = document.createElement('a-torus');
+            ring.setAttribute('color', '#FFA500');
+            ring.setAttribute('radius', '0.3');
+            ring.setAttribute('radius-tubular', '0.02');
+            ring.setAttribute('rotation', '90 0 0');
+
+            const hitBox = document.createElement('a-sphere');
+            hitBox.setAttribute('radius', '0.6');
+            hitBox.setAttribute('material', 'visible: false; opacity: 0');
+            hitBox.classList.add('clickable');
+
+            coin.appendChild(mesh);
+            coin.appendChild(ring);
+            coin.appendChild(hitBox);
+
+            coin.setAttribute('collectible-behavior', 'type: coin; value: 1');
+
+            coin.setAttribute('animation', 'property: scale; from: 0 0 0; to: 1 1 1; dur: 500; easing: easeOutElastic');
+
+            coinContainer.appendChild(coin);
+        }
+
+        function collectItem(el, value, type) {
+            playCoinSound();
+
+            // Bonus sound for chest
+            if (type === 'chest') {
+                setTimeout(playCoinSound, 150);
+                setTimeout(playCoinSound, 300);
+            }
+
+            score += value;
+            scoreElement.innerText = score;
+
+            el.removeAttribute('collectible-behavior');
+
+            const hitBox = el.querySelector('.clickable');
+            if (hitBox) hitBox.classList.remove('clickable');
+
+            // Visual Effect
+            const color = type === 'chest' ? '#8B4513' : '#FFF';
+            const explosion = document.createElement('a-ring');
+            explosion.setAttribute('color', color);
+            explosion.setAttribute('radius-inner', '0.3');
+            explosion.setAttribute('radius-outer', '0.35');
+            explosion.setAttribute('position', el.getAttribute('position'));
+            explosion.setAttribute('rotation', '0 0 0');
+            explosion.setAttribute('look-at', '[camera]');
+            explosion.setAttribute('material', 'shader: flat; transparent: true; opacity: 1');
+            explosion.setAttribute('animation', 'property: scale; to: 3 3 3; dur: 400; easing: easeOutQuad');
+            explosion.setAttribute('animation__fade', 'property: material.opacity; to: 0; dur: 400; easing: easeOutQuad');
+
+            coinContainer.appendChild(explosion);
+            setTimeout(() => { explosion.remove(); }, 500);
+
+            el.setAttribute('animation', 'property: scale; to: 0 0 0; dur: 200; easing: easeInBack');
+            setTimeout(() => {
+                if (el.parentNode) {
+                    el.parentNode.removeChild(el);
+                }
+            }, 200);
+        }
+
+        function resetGame() {
+            score = 0;
+            scoreElement.innerText = score;
+            while (coinContainer.firstChild) {
+                coinContainer.removeChild(coinContainer.firstChild);
+            }
+            spawnBatch();
+        }
+
+        function spawnBatch() {
+            for (let i = 0; i < 4; i++) {
+                spawnItem();
+            }
+        }
+
+        function scheduleNextSpawn() {
+            const delay = 2000 + Math.random() * 2000;
+            setTimeout(() => {
+                if (document.querySelectorAll('.clickable').length < 10) {
+                    spawnItem();
+                }
+                scheduleNextSpawn();
+            }, delay);
+        }
+
+        // --- Initialization & Permissions ---
+
+        function startGame() {
+            // Request iOS 13+ DeviceOrientation permission
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 DeviceOrientationEvent.requestPermission()
                     .then(response => {
