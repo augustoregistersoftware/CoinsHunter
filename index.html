@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
     <title>AR Coin Collector</title>
-    
+
     <!-- A-Frame and AR.js Libraries -->
     <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
@@ -91,42 +92,44 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
     </style>
 </head>
+
 <body>
 
-    <!-- Loading Screen -->
+    <!-- Start/Loading Screen -->
     <div id="loading">
         <div class="spinner"></div>
-        <div>Carregando AR...</div>
-        <div style="font-size: 0.8rem; margin-top: 10px; opacity: 0.7;">Permita o acesso à câmera</div>
+        <div id="loading-text">Carregando AR...</div>
+        <div id="permission-note" style="font-size: 0.8rem; margin-top: 10px; opacity: 0.7;">Permita o acesso à câmera
+        </div>
+        <button id="start-btn" style="display: none; margin-top: 20px;" onclick="startGame()">INICIAR JOGO</button>
+        <div id="error-msg"
+            style="color: #ff4b1f; margin-top: 20px; max-width: 80%; text-align: center; display: none;"></div>
     </div>
 
     <!-- HUD -->
-    <div id="hud">
+    <div id="hud" style="display: none;">
         <div id="score-container">
-            <span id="coin-icon">●</span> 
+            <span id="coin-icon">●</span>
             <span>Moedas: <span id="score">0</span></span>
         </div>
         <button onclick="resetGame()">Resetar Moedas</button>
     </div>
 
     <!-- AR Scene -->
-    <!-- arjs parameters: 
-         sourceType: webcam -> Use phone camera
-         debugUIEnabled: false -> Hide AR.js debug info
-         detectionMode: mono_and_matrix -> Better detection
-    -->
-    <a-scene 
-        embedded 
+    <a-scene embedded
         arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
-        vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true; colorManagement: true;"
-        cursor="rayOrigin: mouse" 
-        raycaster="objects: .clickable">
+        vr-mode-ui="enabled: false" renderer="logarithmicDepthBuffer: true; colorManagement: true;"
+        cursor="rayOrigin: mouse" raycaster="objects: .clickable">
 
         <!-- Lighting -->
         <a-light type="ambient" color="#BBB"></a-light>
@@ -135,7 +138,7 @@
         <!-- Camera -->
         <a-entity camera look-controls></a-entity>
 
-        <!-- Coin Container (Coins will be spawned here) -->
+        <!-- Coin Container -->
         <a-entity id="coin-container"></a-entity>
 
     </a-scene>
@@ -146,58 +149,59 @@
         const scoreElement = document.getElementById('score');
         const coinContainer = document.getElementById('coin-container');
         const loadingScreen = document.getElementById('loading');
+        const loadingText = document.getElementById('loading-text');
+        const startBtn = document.getElementById('start-btn');
+        const hud = document.getElementById('hud');
+        const errorMsg = document.getElementById('error-msg');
 
-        // --- Audio (Base64 Coin Sound) ---
-        // Short "ding" sound
-        const coinSoundBase64 = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="; // Placeholder, will replace with real base64 below
-        // Real simple beep for demo purposes if the long string is too much, but let's try to generate a synth sound or use a short buffer.
-        // Actually, let's use Web Audio API to generate a sound to avoid massive base64 strings.
-        
+        // --- HTTPS Check ---
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            showError("ERRO: AR requer HTTPS! A câmera não funcionará em conexões inseguras. Por favor, use HTTPS.");
+        }
+
+        function showError(msg) {
+            loadingText.style.display = 'none';
+            document.querySelector('.spinner').style.display = 'none';
+            errorMsg.innerText = msg;
+            errorMsg.style.display = 'block';
+        }
+
+        // --- Audio (Web Audio API) ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        
+
         function playCoinSound() {
             if (audioCtx.state === 'suspended') {
                 audioCtx.resume();
             }
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
-            
+
             oscillator.type = 'sine';
             oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
             oscillator.frequency.exponentialRampToValueAtTime(2000, audioCtx.currentTime + 0.1);
-            
+
             gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
             gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
-            
+
             oscillator.connect(gainNode);
             gainNode.connect(audioCtx.destination);
-            
+
             oscillator.start();
             oscillator.stop(audioCtx.currentTime + 0.3);
         }
 
         // --- Coin Logic ---
-
-        // Component to handle coin rotation and interaction
         AFRAME.registerComponent('coin-behavior', {
             init: function () {
-                // Random rotation speed
                 this.rotSpeed = 1 + Math.random() * 2;
-                
-                // Click/Touch listener
                 this.el.addEventListener('click', (evt) => {
                     collectCoin(this.el);
                 });
-                
-                // Add hover animation (bobbing)
                 this.initialY = this.el.object3D.position.y;
                 this.timeOffset = Math.random() * 100;
             },
             tick: function (time, timeDelta) {
-                // Rotate
                 this.el.object3D.rotation.y += this.rotSpeed * (timeDelta / 1000);
-                
-                // Bob up and down
                 const bobAmount = 0.1;
                 const bobSpeed = 0.002;
                 this.el.object3D.position.y = this.initialY + Math.sin(time * bobSpeed + this.timeOffset) * bobAmount;
@@ -206,72 +210,57 @@
 
         function spawnCoin() {
             const coin = document.createElement('a-entity');
-            
-            // Random Position around the user
-            // x: -3 to 3, z: -3 to -6 (in front), y: -0.5 to 1 (height)
             const x = (Math.random() - 0.5) * 6;
-            const y = (Math.random() * 1.5) - 0.5; // Slightly below eye level to above
-            const z = -(Math.random() * 3 + 2); // 2 to 5 meters away
-            
+            const y = (Math.random() * 1.5) - 0.5;
+            const z = -(Math.random() * 3 + 2);
+
             coin.setAttribute('position', `${x} ${y} ${z}`);
-            
-            // Visuals: Cylinder (Coin shape)
-            // Using a group to rotate the cylinder to face up, while the parent rotates around Y
+
             const mesh = document.createElement('a-cylinder');
             mesh.setAttribute('color', '#FFD700');
             mesh.setAttribute('height', '0.1');
             mesh.setAttribute('radius', '0.3');
-            mesh.setAttribute('rotation', '90 0 0'); // Face camera roughly
+            mesh.setAttribute('rotation', '90 0 0');
             mesh.setAttribute('material', 'metalness: 0.8; roughness: 0.2; opacity: 0.9');
-            
-            // Add an inner detail (optional, simple ring)
+
             const ring = document.createElement('a-torus');
             ring.setAttribute('color', '#FFA500');
             ring.setAttribute('radius', '0.3');
             ring.setAttribute('radius-tubular', '0.02');
             ring.setAttribute('rotation', '90 0 0');
-            
+
             coin.appendChild(mesh);
             coin.appendChild(ring);
-            
-            // Add behavior and class for raycaster
+
             coin.setAttribute('coin-behavior', '');
             coin.classList.add('clickable');
-            
-            // Animation for spawning (scale up)
             coin.setAttribute('animation', 'property: scale; from: 0 0 0; to: 1 1 1; dur: 500; easing: easeOutElastic');
 
             coinContainer.appendChild(coin);
         }
 
         function collectCoin(coinEl) {
-            // Sound
             playCoinSound();
-            
-            // Score
             score++;
             scoreElement.innerText = score;
-            
-            // Visual feedback (Scale out and fade)
-            coinEl.removeAttribute('coin-behavior'); // Stop bobbing
-            coinEl.classList.remove('clickable'); // Prevent double click
-            
-            // Create a simple particle explosion effect (simulated with expanding ring)
+
+            coinEl.removeAttribute('coin-behavior');
+            coinEl.classList.remove('clickable');
+
             const explosion = document.createElement('a-ring');
             explosion.setAttribute('color', '#FFF');
             explosion.setAttribute('radius-inner', '0.3');
             explosion.setAttribute('radius-outer', '0.35');
             explosion.setAttribute('position', coinEl.getAttribute('position'));
             explosion.setAttribute('rotation', '0 0 0');
-            explosion.setAttribute('look-at', '[camera]'); // Face camera
+            explosion.setAttribute('look-at', '[camera]');
             explosion.setAttribute('material', 'shader: flat; transparent: true; opacity: 1');
             explosion.setAttribute('animation', 'property: scale; to: 3 3 3; dur: 400; easing: easeOutQuad');
             explosion.setAttribute('animation__fade', 'property: material.opacity; to: 0; dur: 400; easing: easeOutQuad');
-            
+
             coinContainer.appendChild(explosion);
             setTimeout(() => { explosion.remove(); }, 500);
 
-            // Remove coin
             coinEl.setAttribute('animation', 'property: scale; to: 0 0 0; dur: 200; easing: easeInBack');
             setTimeout(() => {
                 if (coinEl.parentNode) {
@@ -283,30 +272,21 @@
         function resetGame() {
             score = 0;
             scoreElement.innerText = score;
-            
-            // Remove all existing coins
             while (coinContainer.firstChild) {
                 coinContainer.removeChild(coinContainer.firstChild);
             }
-            
-            // Spawn initial batch
             spawnBatch();
         }
 
         function spawnBatch() {
-            // Spawn 3-5 coins immediately
-            for(let i=0; i<4; i++) {
+            for (let i = 0; i < 4; i++) {
                 spawnCoin();
             }
         }
 
-        // --- Game Loop ---
-        
-        // Spawn a new coin every 2-4 seconds
         function scheduleNextSpawn() {
             const delay = 2000 + Math.random() * 2000;
             setTimeout(() => {
-                // Limit max coins to prevent performance issues
                 if (document.querySelectorAll('.clickable').length < 10) {
                     spawnCoin();
                 }
@@ -314,19 +294,61 @@
             }, delay);
         }
 
-        // --- Initialization ---
+        // --- Initialization & Permissions ---
+
+        function startGame() {
+            // Request iOS 13+ DeviceOrientation permission
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            initGame();
+                        } else {
+                            showError("Permissão de orientação negada.");
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                // Non-iOS 13+ devices
+                initGame();
+            }
+        }
+
+        function initGame() {
+            loadingScreen.style.opacity = 0;
+            setTimeout(() => {
+                loadingScreen.style.display = 'none';
+                hud.style.display = 'flex';
+            }, 500);
+
+            // Resume Audio Context if needed
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            spawnBatch();
+            scheduleNextSpawn();
+        }
+
         window.addEventListener('load', () => {
-            // Hide loading screen when scene is loaded
             const scene = document.querySelector('a-scene');
+
+            // Wait for scene to load
             scene.addEventListener('loaded', () => {
-                loadingScreen.style.opacity = 0;
-                setTimeout(() => { loadingScreen.style.display = 'none'; }, 500);
-                
-                spawnBatch();
-                scheduleNextSpawn();
+                document.querySelector('.spinner').style.display = 'none';
+                loadingText.style.display = 'none';
+                document.getElementById('permission-note').style.display = 'none';
+
+                // Show Start Button
+                startBtn.style.display = 'block';
+            });
+
+            // Camera Error Handling
+            scene.addEventListener('camera-error', (e) => {
+                showError("Erro ao acessar a câmera. Verifique as permissões.");
             });
         });
-
     </script>
 </body>
+
 </html>
