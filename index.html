@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>AR Coin Collector</title>
+    
+    <!-- A-Frame and AR.js Libraries -->
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* HUD Styles */
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 15px;
+            border-radius: 12px;
+            color: white;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 150px;
+        }
+
+        #score-container {
+            font-size: 1.2rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #coin-icon {
+            color: #FFD700;
+            font-size: 1.5rem;
+        }
+
+        button {
+            background: linear-gradient(135deg, #ff4b1f, #ff9068);
+            border: none;
+            padding: 10px 15px;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: transform 0.1s, opacity 0.2s;
+            outline: none;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        /* Loading Overlay */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #1a1a1a;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            flex-direction: column;
+            transition: opacity 0.5s;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #FFD700;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Screen -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <div>Carregando AR...</div>
+        <div style="font-size: 0.8rem; margin-top: 10px; opacity: 0.7;">Permita o acesso à câmera</div>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud">
+        <div id="score-container">
+            <span id="coin-icon">●</span> 
+            <span>Moedas: <span id="score">0</span></span>
+        </div>
+        <button onclick="resetGame()">Resetar Moedas</button>
+    </div>
+
+    <!-- AR Scene -->
+    <!-- arjs parameters: 
+         sourceType: webcam -> Use phone camera
+         debugUIEnabled: false -> Hide AR.js debug info
+         detectionMode: mono_and_matrix -> Better detection
+    -->
+    <a-scene 
+        embedded 
+        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+        vr-mode-ui="enabled: false"
+        renderer="logarithmicDepthBuffer: true; colorManagement: true;"
+        cursor="rayOrigin: mouse" 
+        raycaster="objects: .clickable">
+
+        <!-- Lighting -->
+        <a-light type="ambient" color="#BBB"></a-light>
+        <a-light type="directional" position="0.5 1 -1" color="#FFF" intensity="0.8"></a-light>
+
+        <!-- Camera -->
+        <a-entity camera look-controls></a-entity>
+
+        <!-- Coin Container (Coins will be spawned here) -->
+        <a-entity id="coin-container"></a-entity>
+
+    </a-scene>
+
+    <script>
+        // --- Game State ---
+        let score = 0;
+        const scoreElement = document.getElementById('score');
+        const coinContainer = document.getElementById('coin-container');
+        const loadingScreen = document.getElementById('loading');
+
+        // --- Audio (Base64 Coin Sound) ---
+        // Short "ding" sound
+        const coinSoundBase64 = "data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="; // Placeholder, will replace with real base64 below
+        // Real simple beep for demo purposes if the long string is too much, but let's try to generate a synth sound or use a short buffer.
+        // Actually, let's use Web Audio API to generate a sound to avoid massive base64 strings.
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playCoinSound() {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(2000, audioCtx.currentTime + 0.1);
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // --- Coin Logic ---
+
+        // Component to handle coin rotation and interaction
+        AFRAME.registerComponent('coin-behavior', {
+            init: function () {
+                // Random rotation speed
+                this.rotSpeed = 1 + Math.random() * 2;
+                
+                // Click/Touch listener
+                this.el.addEventListener('click', (evt) => {
+                    collectCoin(this.el);
+                });
+                
+                // Add hover animation (bobbing)
+                this.initialY = this.el.object3D.position.y;
+                this.timeOffset = Math.random() * 100;
+            },
+            tick: function (time, timeDelta) {
+                // Rotate
+                this.el.object3D.rotation.y += this.rotSpeed * (timeDelta / 1000);
+                
+                // Bob up and down
+                const bobAmount = 0.1;
+                const bobSpeed = 0.002;
+                this.el.object3D.position.y = this.initialY + Math.sin(time * bobSpeed + this.timeOffset) * bobAmount;
+            }
+        });
+
+        function spawnCoin() {
+            const coin = document.createElement('a-entity');
+            
+            // Random Position around the user
+            // x: -3 to 3, z: -3 to -6 (in front), y: -0.5 to 1 (height)
+            const x = (Math.random() - 0.5) * 6;
+            const y = (Math.random() * 1.5) - 0.5; // Slightly below eye level to above
+            const z = -(Math.random() * 3 + 2); // 2 to 5 meters away
+            
+            coin.setAttribute('position', `${x} ${y} ${z}`);
+            
+            // Visuals: Cylinder (Coin shape)
+            // Using a group to rotate the cylinder to face up, while the parent rotates around Y
+            const mesh = document.createElement('a-cylinder');
+            mesh.setAttribute('color', '#FFD700');
+            mesh.setAttribute('height', '0.1');
+            mesh.setAttribute('radius', '0.3');
+            mesh.setAttribute('rotation', '90 0 0'); // Face camera roughly
+            mesh.setAttribute('material', 'metalness: 0.8; roughness: 0.2; opacity: 0.9');
+            
+            // Add an inner detail (optional, simple ring)
+            const ring = document.createElement('a-torus');
+            ring.setAttribute('color', '#FFA500');
+            ring.setAttribute('radius', '0.3');
+            ring.setAttribute('radius-tubular', '0.02');
+            ring.setAttribute('rotation', '90 0 0');
+            
+            coin.appendChild(mesh);
+            coin.appendChild(ring);
+            
+            // Add behavior and class for raycaster
+            coin.setAttribute('coin-behavior', '');
+            coin.classList.add('clickable');
+            
+            // Animation for spawning (scale up)
+            coin.setAttribute('animation', 'property: scale; from: 0 0 0; to: 1 1 1; dur: 500; easing: easeOutElastic');
+
+            coinContainer.appendChild(coin);
+        }
+
+        function collectCoin(coinEl) {
+            // Sound
+            playCoinSound();
+            
+            // Score
+            score++;
+            scoreElement.innerText = score;
+            
+            // Visual feedback (Scale out and fade)
+            coinEl.removeAttribute('coin-behavior'); // Stop bobbing
+            coinEl.classList.remove('clickable'); // Prevent double click
+            
+            // Create a simple particle explosion effect (simulated with expanding ring)
+            const explosion = document.createElement('a-ring');
+            explosion.setAttribute('color', '#FFF');
+            explosion.setAttribute('radius-inner', '0.3');
+            explosion.setAttribute('radius-outer', '0.35');
+            explosion.setAttribute('position', coinEl.getAttribute('position'));
+            explosion.setAttribute('rotation', '0 0 0');
+            explosion.setAttribute('look-at', '[camera]'); // Face camera
+            explosion.setAttribute('material', 'shader: flat; transparent: true; opacity: 1');
+            explosion.setAttribute('animation', 'property: scale; to: 3 3 3; dur: 400; easing: easeOutQuad');
+            explosion.setAttribute('animation__fade', 'property: material.opacity; to: 0; dur: 400; easing: easeOutQuad');
+            
+            coinContainer.appendChild(explosion);
+            setTimeout(() => { explosion.remove(); }, 500);
+
+            // Remove coin
+            coinEl.setAttribute('animation', 'property: scale; to: 0 0 0; dur: 200; easing: easeInBack');
+            setTimeout(() => {
+                if (coinEl.parentNode) {
+                    coinEl.parentNode.removeChild(coinEl);
+                }
+            }, 200);
+        }
+
+        function resetGame() {
+            score = 0;
+            scoreElement.innerText = score;
+            
+            // Remove all existing coins
+            while (coinContainer.firstChild) {
+                coinContainer.removeChild(coinContainer.firstChild);
+            }
+            
+            // Spawn initial batch
+            spawnBatch();
+        }
+
+        function spawnBatch() {
+            // Spawn 3-5 coins immediately
+            for(let i=0; i<4; i++) {
+                spawnCoin();
+            }
+        }
+
+        // --- Game Loop ---
+        
+        // Spawn a new coin every 2-4 seconds
+        function scheduleNextSpawn() {
+            const delay = 2000 + Math.random() * 2000;
+            setTimeout(() => {
+                // Limit max coins to prevent performance issues
+                if (document.querySelectorAll('.clickable').length < 10) {
+                    spawnCoin();
+                }
+                scheduleNextSpawn();
+            }, delay);
+        }
+
+        // --- Initialization ---
+        window.addEventListener('load', () => {
+            // Hide loading screen when scene is loaded
+            const scene = document.querySelector('a-scene');
+            scene.addEventListener('loaded', () => {
+                loadingScreen.style.opacity = 0;
+                setTimeout(() => { loadingScreen.style.display = 'none'; }, 500);
+                
+                spawnBatch();
+                scheduleNextSpawn();
+            });
+        });
+
+    </script>
+</body>
+</html>
